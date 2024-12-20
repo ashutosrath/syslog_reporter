@@ -13,3 +13,5 @@ temp_*
 report*.md
 *.log
 .DS_*
+.vscode*
+.streamlit*
