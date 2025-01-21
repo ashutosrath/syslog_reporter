@@ -6,6 +6,7 @@ tiktoken
 google-generativeai
 langchain_experimental
 langchain_openai
+langchain_ollama
 pandas
 protobuf
 streamlit

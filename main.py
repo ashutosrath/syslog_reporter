@@ -16,16 +16,22 @@ bot = gpt.GPTModelSync(model=gpt.Model.GPT_4_OMNI_MINI.value[0])
 # bot = gemini.GeminiModelSync()
 
 def scan_logfile(lines: list[str], log_scan_prompt: str, log_merge_prompt: str, line_chunk_size: int = 1000, model: str = gpt.Model.GPT_4_OMNI_MINI.value[0]) -> tuple[list[dict], float]:
+    chunks = split_into_chunks(lines, line_chunk_size)
+    issues, total_cost = process_chunks(chunks, log_scan_prompt, model)
+    final_issues = merge_issues_if_needed(chunks, issues, log_merge_prompt, model)
+    return final_issues, total_cost
+
+def split_into_chunks(lines: list[str], line_chunk_size: int) -> list[list[str]]:
     chunks = [lines[i:i+line_chunk_size] for i in range(0, len(lines), line_chunk_size)]
     if len(chunks) > 1:
         print(f"Long log file - splitting into {len(chunks)} chunks", file=sys.stderr)
-    report = ""
-    total_cost = 0
+    return chunks
+
+def process_chunks(chunks: list[list[str]], log_scan_prompt: str, model: str) -> tuple[list[dict], float]:
     issues = []
-    final_issues = {}
+    total_cost = 0
     for chunk in chunks:
         content = "\n".join(chunk)
-
         messages = [
             {
                 "role": "system",
@@ -37,29 +43,23 @@ def scan_logfile(lines: list[str], log_scan_prompt: str, log_merge_prompt: str, 
             }
         ]
         response = bot.chat(messages, model=model, temperature=0.1, json_format=True)
-        message = response.message.removeprefix("```json").removeprefix("```").removesuffix("```")
-        # sometimes the LLM will either return gibberish, or fail to escape the JSON properly
-        # so we ignore for now
-        # write the message to a file then read it back in ignoring any utf-8 errors
-        with open("temp_log_scan_output.txt", "w") as f:
-            f.write(message)
-        with open("temp_log_scan_output.txt", "r", encoding="utf-8", errors="ignore") as f:
-            message = f.read()
-            message = message.removeprefix("```json").removeprefix("```").replace("```", "") # do this a 2nd time for LLM reasons :-/
+        message = response.message.lstrip("```json").lstrip("```").rstrip("```")
+        message = clean_message(message)
         try:
             issues.extend(json.loads(message)["issues"])
         except json.JSONDecodeError as e:
             print(f"Error: Failed to parse JSON from response: {message}\n\n{e}", file=sys.stderr)
         total_cost += response.cost
-    if len(chunks) > 1 and len(report) < 50000:
-        json_issues = {}
-        for id, issue in enumerate(issues):
-            json_issues[f"issue_{id + 1}"] = {
-                "description": issue["description"],
-                "affected_host(s)": issue["affected_host(s)"],
-                "example_log_entry": issue["example_log_entry"],
-                "affected_service": issue["affected_service"],
-            }
+    return issues, total_cost
+
+def clean_message(message: str) -> str:
+    message = message.replace("```json", "").replace("```", "").strip()
+    return message
+
+def merge_issues_if_needed(chunks: list[list[str]], issues: list[dict], log_merge_prompt: str, model: str) -> dict:
+    final_issues = {}
+    if len(chunks) > 1:
+        json_issues = {f"issue_{id + 1}": issue for id, issue in enumerate(issues)}
         messages = [
             {
                 "role": "system",
@@ -71,28 +71,23 @@ def scan_logfile(lines: list[str], log_scan_prompt: str, log_merge_prompt: str, 
             }
         ]
         response = bot.chat(messages, model=model, temperature=0.1, json_format=True)
-        message = response.message.removeprefix("```json").removeprefix("```").removesuffix("```")
+        message = response.message.replace("```json", "", 1).replace("```", "", 1).rstrip("```")
         merged_issues = json.loads(message)["merged_issues"]
-        total_cost += response.cost
-        # first we need to copy the issues (a list) into the final_issues dict
-        for issue_id, issue in enumerate(issues):
-            final_issues[f"issue_{issue_id + 1}"] = issue
-        # now we remove any issue_ id's that are in the merged issues, apart from the first one in each issue_ids fields
-        for merged_issue in merged_issues:
-            for issue_id in merged_issue["issue_ids"][1:]:
-                if issue_id in final_issues:
-                    del final_issues[issue_id]
-        # now we merge the issues list to overwrite the affected_host(s)
-        for merged_issue in merged_issues:
-            for issue_id in merged_issue["issue_ids"]:
-                if issue_id in final_issues:
-                    final_issues[issue_id]["affected_host(s)"] = merged_issue["affected_host(s)"]
+        final_issues = merge_final_issues(issues, merged_issues)
     if len(final_issues) == 0:
-        # no issues were merged, so copy the original issues list into the final_issues dict
-        for issue_id, issue in enumerate(issues):
-            final_issues[f"issue_{issue_id + 1}"] = issue
+        final_issues = {f"issue_{id + 1}": issue for id, issue in enumerate(issues)}
+    return final_issues
 
-    return final_issues, total_cost
+def merge_final_issues(issues: list[dict], merged_issues: list[dict]) -> dict:
+    final_issues = {f"issue_{id + 1}": issue for id, issue in enumerate(issues)}
+    for merged_issue in merged_issues:
+        for issue_id in merged_issue["issue_ids"][1:]:
+            if issue_id in final_issues:
+                del final_issues[issue_id]
+        for issue_id in merged_issue["issue_ids"]:
+            if issue_id in final_issues:
+                final_issues[issue_id]["affected_host(s)"] = merged_issue["affected_host(s)"]
+    return final_issues
 
 def issue_to_report(issue: dict) -> str:
     report = f"- Issue: {issue['issue']}\n"
@@ -126,7 +121,7 @@ def get_resolution(issue: dict, resolution_prompt: str, suggestion_model: str = 
         }
     ]
     response = bot.chat(messages, model=suggestion_model, temperature=0.1)
-    suggestion = response.message.removesuffix('```').removeprefix('```json`').removeprefix('```')
+    suggestion = response.message.rstrip('```').lstrip('```json`').lstrip('```')
 
     return suggestion, response.cost
 

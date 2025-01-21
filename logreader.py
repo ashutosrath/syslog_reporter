@@ -264,5 +264,6 @@ def read_logfile(file, ignore_list, match_list, replacement_map, regex_ignore_li
         lines = [line for line in lines if not any(re.search(ignore, line) for ignore in regex_ignore_list)]
     if len(match_list) > 0:
         lines = [line for line in lines if any(match in line for match in match_list)]
-    lines = [line.replace(k, v) for k, v in replacement_map.items() for line in lines]
+    for k, v in replacement_map.items():
+        lines = [line.replace(k, v) for line in lines]
     return lines
