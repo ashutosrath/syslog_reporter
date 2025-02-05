@@ -98,14 +98,14 @@ def get_syslog(file):
     return log_contents
 
 def output_final_report_for_chat_app(cost, log_length, token_length,number_of_issues, model, total_time):
-    today_string = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    today_string = datetime.now().strftime("%Y-%m-%d %H::%M::%S")
     seconds = round(total_time % 60)
     minutes = round((total_time // 60) % 60)
     final_report = f"### Report Summary\n\n"
     final_report += f"- Report generated on {today_string}\n"
     final_report += f"- Number of issues found: {number_of_issues}\n"
     final_report += f"- Cost: US${cost:.3f}, Time taken: {minutes:02d}m {seconds:02d}s, Model: {model}\n"
-    final_report += f"- Log length: {log_length}, Token length: {token_length}\n"
+    final_report += f"- Log length: {log_length} lines, Token length: {token_length}\n"
     final_report += f"### Issue List in detail: \n\n"
     return final_report
 
@@ -261,12 +261,12 @@ def render_left_column():
 def render_center_column(generate_button, issue_model, suggestion_model, provider,ollama_url,
                          resolutions, dry_count, remove_duplicates, config_file, show_log, overrides):
     st.write("### Details of issues")
-    center_container = st.container(height=500,border=False)
+    center_container = st.container()
     center_container.markdown(
         """
         <style>
-        .chat-container {
-            max-height: 500px;
+        .center_container {
+            max-height: calc(100vh - 200px);
             overflow-y: auto;
         }
         </style>
@@ -275,7 +275,6 @@ def render_center_column(generate_button, issue_model, suggestion_model, provide
     )
     with center_container:
         if generate_button:
-                full_response = ""
                 with st.spinner("Analysing... it will take around a minute"):
                     generate_report(issue_model, suggestion_model, provider, ollama_url, resolutions, dry_count,
                         remove_duplicates, config_file, show_log, overrides)
@@ -288,15 +287,13 @@ def render_center_column(generate_button, issue_model, suggestion_model, provide
 
 def render_right_column(api_valid, agent_action):
     st.write("### Chat")
-    chat_boarder = False
-    if "messages" not in st.session_state.keys():
-        chat_boarder = False
-    chat_container = st.container(height=500,border=chat_boarder)
+
+    chat_container = st.container(height=550,border=True)
     chat_container.markdown(
         """
         <style>
         .chat-container {
-            max-height: 500px;
+            max-height: 550px;
             overflow-y: auto;
         }
         </style>
@@ -391,6 +388,7 @@ def main():
             st.warning("No old issues found. Fetch & Generate the report")
             return
         else:
+            print(f"Setting up agent with old issues: {df.shape[0]}")
             setup_agent(df, provider, 
                 ollama_url if provider == "ollama" else None,
                 selected_model)
